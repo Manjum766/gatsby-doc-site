@@ -1,0 +1,12 @@
+[
+  {
+    "slug": "getting-started",
+    "title": "Getting Started",
+    "content": "Welcome to my documentation site"
+  },
+  {
+    "slug": "installation",
+    "title": "Installation",
+    "content": "Steps to install the project"
+  }
+]
