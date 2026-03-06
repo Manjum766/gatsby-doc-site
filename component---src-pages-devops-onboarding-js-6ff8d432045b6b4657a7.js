@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunkmy_gatsby_site=self.webpackChunkmy_gatsby_site||[]).push([[336],{2648:function(e,t,n){n.r(t),n.d(t,{default:function(){return a}});var l=n(6540);function a(){return l.createElement("div",{style:{padding:"40px"}},l.createElement("h1",null,"DevOps Onboarding"),l.createElement("h3",null,"Step 1"),l.createElement("p",null,"Install NodeJS and Git"),l.createElement("h3",null,"Step 2"),l.createElement("p",null,"Clone the repository"))}}}]);
+//# sourceMappingURL=component---src-pages-devops-onboarding-js-6ff8d432045b6b4657a7.js.map
