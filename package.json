@@ -1,6 +1,7 @@
 {
   "name": "my-gatsby-site",
   "version": "1.0.0",
+  "homepage": "https://Manjum766.github.io",
   "private": true,
   "description": "my-gatsby-site",
   "author": "Manjum766",
@@ -11,6 +12,7 @@
     "develop": "gatsby develop",
     "start": "gatsby develop",
     "build": "gatsby build",
+	"deploy": "gatsby build && gh-pages -d public"
     "serve": "gatsby serve",
     "clean": "gatsby clean"
   },
