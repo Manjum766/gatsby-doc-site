@@ -2,18 +2,21 @@ import React from "react"
 import Sidebar from "./sidebar"
 
 export default function Layout({ children }) {
+
   return (
-    <div style={{ display: "flex" }}>
-      
+    <div style={{ display: "flex", minHeight: "100vh" }}>
+
       <Sidebar />
 
-      <main style={{
-        flex: 1,
-        padding: "30px",
-        background: "#f5f5f5"
-      }}>
+      <div
+        style={{
+          flex: 1,
+          padding: "40px",
+          backgroundColor: "#f5f7fa"
+        }}
+      >
         {children}
-      </main>
+      </div>
 
     </div>
   )

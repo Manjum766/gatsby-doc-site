@@ -1,8 +1,10 @@
 import React from "react"
+import Layout from "../../components/layout"
 
 export default function Onboarding() {
   return (
-    <div style={{ padding: "40px" }}>
+    <Layout>
+
       <h1>DevOps Onboarding</h1>
 
       <h3>Step 1</h3>
@@ -10,6 +12,7 @@ export default function Onboarding() {
 
       <h3>Step 2</h3>
       <p>Clone the repository</p>
-    </div>
+
+    </Layout>
   )
 }

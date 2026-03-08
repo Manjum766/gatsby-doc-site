@@ -1,18 +1,18 @@
 import React from "react"
-import Sidebar from "../components/sidebar"
+import Layout from "../components/layout"
 
-export default function HomePage() {
+export default function Home() {
 
   return (
-    <div style={{ display: "flex" }}>
+    <Layout>
 
-      <Sidebar />
-
-      <div style={{ padding: "40px" }}>
+      <div style={{ textAlign: "center", marginTop: "100px" }}>
         <h1>Documentation Portal</h1>
+
         <p>Select a topic from the sidebar.</p>
+
       </div>
 
-    </div>
+    </Layout>
   )
 }
