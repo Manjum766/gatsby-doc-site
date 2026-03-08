@@ -1,5 +1,6 @@
 module.exports = 
 {
+  pathPrefix: "/gatsby-doc-site",
   plugins: [
     {
       resolve: `gatsby-source-filesystem`,
