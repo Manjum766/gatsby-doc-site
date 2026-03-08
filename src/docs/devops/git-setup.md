@@ -20,7 +20,7 @@ Password
 
 Username
 
-<img src="/images/2githhub_create_account2.png" width="400" height="400"/>
+<img src="../../images/2githhub_create_account2.png" width="400" height="400"/>
 
 Verify your account via email.
 
@@ -37,7 +37,7 @@ git --version <br>
 you should e able to see git verions if installation us suncessful.
 
 ## Git-install
-<img src="/images/complete-git-install-windows.png" width="400" />
+<img src="../../images/complete-git-install-windows.png" width="400" />
 
 ## Configure Git
 git config --global user.name "Your Name"
