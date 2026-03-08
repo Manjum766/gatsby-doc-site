@@ -28,7 +28,7 @@ Login to GitHub.
 
 ## Install Git
 
-Download Git:
+## Download Git:
 
 https://git-scm.com/downloads
 
