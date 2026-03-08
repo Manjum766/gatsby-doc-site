@@ -8,7 +8,7 @@ slug: /devops/git-setup
 Open GitHub:
 https://github.com
 
-<img src="../static/images/1signup.png" width="400" height="400" />
+<img src="../../images/1signup.png" width="400" height="400" />
 
 Click Sign Up
 
