@@ -12,12 +12,14 @@
     "develop": "gatsby develop",
     "start": "gatsby develop",
     "build": "gatsby build",
-	"deploy": "gatsby build && gh-pages -d public",
+    "deploy": "gatsby build && gh-pages -d public",
     "serve": "gatsby serve",
     "clean": "gatsby clean"
   },
   "dependencies": {
     "gatsby": "^5.14.6",
+    "gatsby-source-filesystem": "^5.16.0",
+    "gatsby-transformer-remark": "^6.16.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   }

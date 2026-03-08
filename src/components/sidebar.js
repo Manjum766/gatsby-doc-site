@@ -46,6 +46,14 @@ export default function Sidebar() {
         Kubernetes Setup
       </Link>
 
+      <Link
+        to="/devops/git-setup"
+        style={linkStyle}
+        activeStyle={{ color: "#60a5fa", fontWeight: "bold" }}
+      >
+        Git-Setup
+      </Link>
+
     </div>
   )
 }

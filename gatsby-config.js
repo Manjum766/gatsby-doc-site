@@ -1,9 +1,13 @@
-/**
- * @type {import('gatsby').GatsbyConfig}
- */
-module.exports = {
-  siteMetadata: {
-    siteUrl: `https://www.yourdomain.tld`,
-  },
-  plugins: [],
+module.exports = 
+{
+  plugins: [
+    {
+      resolve: `gatsby-source-filesystem`,
+      options: {
+        name: `docs`,
+        path: `${__dirname}/src/docs`
+      }
+    },
+    `gatsby-transformer-remark`
+  ]
 }
