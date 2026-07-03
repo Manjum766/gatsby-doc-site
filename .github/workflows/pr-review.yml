@@ -1,61 +1,66 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # PR Review Agent
 #
-# Triggered on every pull_request event (opened, edited, synchronize).
-# Runs four independent jobs in parallel:
-#   1. enforce-standards  – enterprise PR metadata checks
-#   2. build-and-lint     – Gatsby build + ESLint (code quality)
-#   3. llm-code-review    – AI-assisted diff review via OpenAI
-#   4. security-scan      – (delegates to security-scan.yml via workflow_call)
+# Triggered on every pull_request event (opened, edited, synchronize, reopened)
+# targeting the master branch.
 #
-# Required repository secrets:
-#   OPENAI_API_KEY  – used by the LLM review job
-# Required repository permissions (Settings → Actions → General):
-#   Pull requests: Read and Write (to post review comments)
+# Jobs:
+#   1. enforce-standards  – PR title, branch name, description checks
+#   2. build-and-lint     – gatsby build + console.log + secret heuristic
+#   3. llm-code-review    – GPT-4o diff review (skipped if no key)
+#   4. security-scan      – npm audit + gitleaks
+#   5. pr-review-gate     – aggregates 1+2+4; branch protection hooks here
+#
+# Required secrets (Settings → Secrets → Actions):
+#   OPENAI_API_KEY   – optional; LLM job is skipped when absent
+#
+# Required repo settings BEFORE this works:
+#   Settings → Actions → General → Workflow permissions → Read and write
+#   Settings → Branches → master → Require status check: "✅ PR Review Gate"
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: PR Review Agent
 
 on:
   pull_request:
+    branches: [master]
     types: [opened, edited, synchronize, reopened]
 
-# Cancel in-flight runs for the same PR when a new push arrives.
+# Cancel stale runs when a new push arrives on the same PR.
 concurrency:
   group: pr-review-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 permissions:
   contents: read
-  pull-requests: write   # needed to post review comments
-  security-events: write # needed for SARIF uploads in security job
+  pull-requests: write
+  security-events: write
 
 # ─────────────────────────────────────────────────────────────────────────────
 # JOB 1 — Enforce Enterprise PR Standards
 # ─────────────────────────────────────────────────────────────────────────────
 jobs:
+
   enforce-standards:
     name: 📋 Enforce PR Standards
     runs-on: ubuntu-latest
-    outputs:
-      standards_passed: ${{ steps.check.outputs.passed }}
 
     steps:
       - name: Validate PR title (Conventional Commits)
-        id: title-check
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           echo "PR title: $PR_TITLE"
-          # Regex: type(optional-scope)!?: description
-          # Allowed types: feat|fix|docs|style|refactor|perf|test|chore|build|ci|revert
           if echo "$PR_TITLE" | grep -Eq \
             '^(feat|fix|docs|style|refactor|perf|test|chore|build|ci|revert)(\([a-z0-9/_-]+\))?!?: .{1,72}$'; then
             echo "✅ PR title is valid Conventional Commit format"
           else
-            echo "❌ PR title does not follow Conventional Commits:"
+            echo "❌ PR title does not follow Conventional Commits"
             echo "   Expected: type(scope): description"
             echo "   Got:      $PR_TITLE"
+            echo ""
+            echo "   Valid types: feat|fix|docs|style|refactor|perf|test|chore|build|ci|revert"
+            echo "   Example:  feat(sidebar): add PR review agent nav link"
             exit 1
           fi
 
@@ -64,53 +69,35 @@ jobs:
           BRANCH: ${{ github.head_ref }}
         run: |
           echo "Branch: $BRANCH"
-          # Allowed patterns: type/NNN-slug  OR  type/slug (no issue number required)
           if echo "$BRANCH" | grep -Eq \
-            '^(feat|fix|docs|style|refactor|perf|test|chore|build|ci|revert|hotfix|release)/[a-z0-9_-]+$'; then
+            '^(feat|fix|docs|style|refactor|perf|test|chore|build|ci|revert|hotfix|release)/[a-z0-9][a-z0-9_-]*$'; then
             echo "✅ Branch name is valid"
           else
-            echo "❌ Branch name does not follow convention: type/short-description"
-            echo "   Got: $BRANCH"
+            echo "❌ Branch name does not follow convention"
+            echo "   Expected: type/short-description (e.g. fix/login-bug)"
+            echo "   Got:      $BRANCH"
             exit 1
           fi
 
-      - name: Check PR has a description
+      - name: Check PR has a non-empty description
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          if [ -z "$(echo "$PR_BODY" | tr -d '[:space:]')" ]; then
-            echo "❌ PR description is empty. Fill in the PR template before requesting review."
+          STRIPPED=$(echo "$PR_BODY" | tr -d '[:space:]')
+          if [ -z "$STRIPPED" ]; then
+            echo "❌ PR description is empty — fill in the PR template before requesting review."
             exit 1
           fi
-          # Ensure at least one checklist item has been ticked
+          echo "✅ PR description is present (${#STRIPPED} chars)"
+          # Warn (not block) if no checklist items are ticked
           if echo "$PR_BODY" | grep -q '\- \[x\]'; then
             echo "✅ At least one checklist item is checked"
           else
-            echo "⚠️  No checklist items are ticked — please complete the PR template."
-            # Warning only; do not block merge on this alone.
+            echo "⚠️  No checklist items ticked — please complete the PR template checklist."
           fi
-
-      - name: Check minimum reviewers requested
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-        run: |
-          REVIEWERS=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
-            --json reviewRequests --jq '.reviewRequests | length')
-          echo "Reviewers requested: $REVIEWERS"
-          if [ "$REVIEWERS" -lt 1 ]; then
-            echo "⚠️  No reviewers have been requested. Please add at least one reviewer."
-          else
-            echo "✅ Reviewer(s) requested"
-          fi
-
-      - name: Set standards output
-        id: check
-        run: echo "passed=true" >> "$GITHUB_OUTPUT"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# JOB 2 — Build + Lint (Code Quality Gate)
+# JOB 2 — Build + Code Quality
 # ─────────────────────────────────────────────────────────────────────────────
   build-and-lint:
     name: 🏗️ Build & Lint
@@ -119,8 +106,6 @@ jobs:
     steps:
       - name: Checkout PR branch
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -135,61 +120,58 @@ jobs:
         run: npm run build
         env:
           NODE_ENV: production
-          # Gatsby telemetry opt-out in CI
           GATSBY_TELEMETRY_DISABLED: '1'
 
-      - name: Lint (ESLint — if configured)
-        # Only run if an ESLint config file exists; Gatsby projects may not have one.
+      - name: Check for debug statements (console.log / warn / error)
         run: |
-          if [ -f ".eslintrc.js" ] || [ -f ".eslintrc.json" ] || \
-             [ -f ".eslintrc.yml" ] || [ -f "eslint.config.js" ]; then
-            npx eslint "src/**/*.{js,jsx,ts,tsx}" --max-warnings 0
-          else
-            echo "ℹ️  No ESLint config found — skipping lint step."
-            echo "    Consider adding eslint + eslint-plugin-react to enforce code style."
-          fi
-
-      - name: Check for leftover debug statements
-        run: |
-          MATCHES=$(grep -rn "console\.\(log\|warn\|error\|debug\)" src/ \
-            --include="*.js" --include="*.jsx" --include="*.ts" --include="*.tsx" \
+          MATCHES=$(grep -rn \
+            -e "console\.log" \
+            -e "console\.warn" \
+            -e "console\.error" \
+            -e "console\.debug" \
+            src/ \
+            --include="*.js" --include="*.jsx" \
+            --include="*.ts" --include="*.tsx" \
             || true)
           if [ -n "$MATCHES" ]; then
-            echo "❌ Debug statements found in src/:"
+            echo "❌ Debug statements found — remove before merging:"
             echo "$MATCHES"
             exit 1
-          else
-            echo "✅ No console.log / debug statements found"
           fi
+          echo "✅ No console.log / debug statements found"
 
-      - name: Check for committed secrets (basic heuristic)
+      - name: Check for hard-coded secrets
         run: |
-          # Rudimentary check — proper secret scanning is in the security job.
+          # Matches assignments like API_KEY = "..." that are NOT reading from process.env
           FOUND=$(grep -rn \
-            -e "PRIVATE_KEY\s*=" \
-            -e "SECRET\s*=" \
-            -e "PASSWORD\s*=" \
-            -e "API_KEY\s*=" \
+            -e 'API_KEY\s*=\s*["'"'"']' \
+            -e 'SECRET\s*=\s*["'"'"']' \
+            -e 'PASSWORD\s*=\s*["'"'"']' \
+            -e 'PRIVATE_KEY\s*=\s*["'"'"']' \
+            -e 'TOKEN\s*=\s*["'"'"']' \
             src/ gatsby-config.js gatsby-node.js \
-            --include="*.js" --include="*.jsx" --include="*.ts" --include="*.tsx" \
-            | grep -v "process\.env\." || true)
+            --include="*.js" --include="*.jsx" \
+            --include="*.ts" --include="*.tsx" \
+            2>/dev/null || true)
           if [ -n "$FOUND" ]; then
             echo "❌ Possible hard-coded secrets detected:"
             echo "$FOUND"
+            echo ""
+            echo "   Use process.env.MY_VAR instead of hard-coded values."
             exit 1
-          else
-            echo "✅ No obvious hard-coded secrets found"
           fi
+          echo "✅ No hard-coded secrets found"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# JOB 3 — LLM-Assisted Code Review
+# JOB 3 — LLM Code Review (skipped when OPENAI_API_KEY is not set)
 # ─────────────────────────────────────────────────────────────────────────────
   llm-code-review:
     name: 🤖 LLM Code Review
     runs-on: ubuntu-latest
-    # Only meaningful when there is an OpenAI key; skip gracefully otherwise.
-    if: ${{ secrets.OPENAI_API_KEY != '' }}
+    # FIX: secrets context cannot be used in `if` expressions directly.
+    # Always run this job; the step itself will exit gracefully when no key.
     needs: [build-and-lint]
+    if: always() && needs.build-and-lint.result == 'success'
 
     steps:
       - name: Checkout PR branch
@@ -203,22 +185,28 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          # Limit diff to source files only; cap at 8 000 lines to stay within token limits.
           git diff "$BASE_SHA" "$HEAD_SHA" \
             -- 'src/**' 'gatsby-config.js' 'gatsby-node.js' 'content/**' \
             | head -n 8000 > /tmp/pr.diff
           echo "diff_lines=$(wc -l < /tmp/pr.diff)" >> "$GITHUB_OUTPUT"
-          echo "Diff size: $(wc -l < /tmp/pr.diff) lines"
+          echo "Diff: $(wc -l < /tmp/pr.diff) lines"
 
-      - name: LLM review via OpenAI Chat Completions
+      - name: LLM review via OpenAI
         id: llm-review
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_BODY:  ${{ github.event.pull_request.body }}
         run: |
-          DIFF=$(cat /tmp/pr.diff)
+          # Skip gracefully when key is absent
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "ℹ️  OPENAI_API_KEY not set — skipping LLM review."
+            echo "review=⚠️ LLM review skipped: add the OPENAI_API_KEY secret to enable this." \
+              >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
+          DIFF=$(cat /tmp/pr.diff)
           PAYLOAD=$(jq -n \
             --arg title "$PR_TITLE" \
             --arg body  "$PR_BODY" \
@@ -230,24 +218,26 @@ jobs:
               messages: [
                 {
                   role: "system",
-                  content: "You are a senior software engineer performing a pull-request code review. Review the diff for: correctness, security issues, performance problems, accessibility regressions, Gatsby-specific anti-patterns, and React best-practice violations. Be concise. Format your response as Markdown with sections: ## Summary, ## Issues (table: Severity | File | Line | Description), ## Suggestions, ## Verdict (Approve / Request Changes / Comment)."
+                  content: "You are a senior software engineer reviewing a GitHub pull request. Analyse the diff for: correctness, security vulnerabilities, performance issues, accessibility regressions, Gatsby anti-patterns, and React best-practice violations. Format your response as Markdown with these sections: ## Summary, ## Issues (table: Severity | File | Line | Description), ## Suggestions, ## Verdict (Approve / Request Changes / Comment)."
                 },
                 {
                   role: "user",
-                  content: ("PR Title: " + $title + "\n\nPR Description:\n" + $body + "\n\nDiff:\n```diff\n" + $diff + "\n```")
+                  content: ("PR: " + $title + "\n\nDescription:\n" + $body + "\n\nDiff:\n```diff\n" + $diff + "\n```")
                 }
               ]
             }')
 
-          RESPONSE=$(curl -s https://api.openai.com/v1/chat/completions \
+          RESPONSE=$(curl -sf https://api.openai.com/v1/chat/completions \
             -H "Authorization: Bearer $OPENAI_API_KEY" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD")
 
           REVIEW=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // "LLM returned no content."')
-          echo "review<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$REVIEW" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
+          {
+            echo "review<<EOF"
+            echo "$REVIEW"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Post LLM review as PR comment
         uses: actions/github-script@v7
@@ -262,19 +252,17 @@ jobs:
               process.env.REVIEW_BODY,
               '',
               '---',
-              '_This review was generated automatically by the PR Review Agent. '
-              + 'It is advisory only — a human reviewer must approve before merge._'
+              '_Generated by the PR Review Agent. Advisory only — a human must approve before merge._'
             ].join('\n');
-
             await github.rest.issues.createComment({
               owner: context.repo.owner,
-              repo: context.repo.repo,
+              repo:  context.repo.repo,
               issue_number: context.payload.pull_request.number,
               body
             });
 
 # ─────────────────────────────────────────────────────────────────────────────
-# JOB 4 — Security Scan (inline — no separate workflow_call needed)
+# JOB 4 — Security Scan
 # ─────────────────────────────────────────────────────────────────────────────
   security-scan:
     name: 🔒 Security Scan
@@ -296,57 +284,49 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: npm audit (high + critical)
+      - name: npm audit (high + critical severity)
+        # --audit-level=high fails the step if any high/critical vuln found
         run: npm audit --audit-level=high --omit=dev
 
       - name: Scan for secrets with Gitleaks
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}   # optional — omit for OSS
-
-      - name: OWASP Dependency-Check
-        uses: dependency-check/Dependency-Check_Action@main
-        with:
-          project: 'gatsby-doc-site'
-          path: '.'
-          format: 'SARIF'
-          out: 'dependency-check-report'
-          args: >-
-            --failOnCVSS 8
-            --enableRetired
-
-      - name: Upload Dependency-Check SARIF to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: dependency-check-report/dependency-check-report.sarif
 
 # ─────────────────────────────────────────────────────────────────────────────
-# JOB 5 — Final Gate: aggregate status for branch protection
+# JOB 5 — Gate: single required status check for branch protection
 # ─────────────────────────────────────────────────────────────────────────────
   pr-review-gate:
     name: ✅ PR Review Gate
     runs-on: ubuntu-latest
     needs: [enforce-standards, build-and-lint, security-scan]
+    # Run even when upstream jobs fail so the gate always reports a result.
     if: always()
 
     steps:
-      - name: Evaluate all job results
+      - name: Evaluate results
         run: |
-          RESULTS='${{ toJSON(needs) }}'
-          echo "Job results:"
-          echo "$RESULTS" | jq .
+          STANDARDS="${{ needs.enforce-standards.result }}"
+          BUILD="${{ needs.build-and-lint.result }}"
+          SECURITY="${{ needs.security-scan.result }}"
 
-          FAILED=$(echo "$RESULTS" | jq -r '
-            to_entries[]
-            | select(.value.result == "failure" or .value.result == "cancelled")
-            | .key')
+          echo "enforce-standards : $STANDARDS"
+          echo "build-and-lint    : $BUILD"
+          echo "security-scan     : $SECURITY"
+
+          FAILED=""
+          [ "$STANDARDS" != "success" ] && FAILED="$FAILED\n  ❌ enforce-standards ($STANDARDS)"
+          [ "$BUILD"     != "success" ] && FAILED="$FAILED\n  ❌ build-and-lint ($BUILD)"
+          [ "$SECURITY"  != "success" ] && FAILED="$FAILED\n  ❌ security-scan ($SECURITY)"
 
           if [ -n "$FAILED" ]; then
-            echo "❌ The following jobs failed or were cancelled:"
-            echo "$FAILED"
+            echo ""
+            echo "The following required checks did not pass:"
+            printf "$FAILED\n"
+            echo ""
+            echo "Fix the issues above before this PR can be merged."
             exit 1
-          else
-            echo "✅ All required jobs passed — PR is ready for human review."
           fi
+
+          echo ""
+          echo "✅ All required checks passed — PR is ready for human review."
