@@ -1,5 +1,6 @@
 import React from "react"
 import { Link } from "gatsby"
+import { NonExistentModule } from "./does-not-exist"
 
 export default function Sidebar() {
 
