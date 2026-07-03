@@ -33,8 +33,8 @@ Login to GitHub.
 https://git-scm.com/downloads
 
 Verify installation: <br>
-git --version <br>
-you should e able to see git verions if installation us suncessful.
+`git --version` <br>
+You should see the installed Git version if the installation was successful.
 
 ## Git-install
 <img src="../../images/complete-git-install-windows.png" width="400" />

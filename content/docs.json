@@ -2,11 +2,16 @@
   {
     "slug": "getting-started",
     "title": "Getting Started",
-    "content": "Welcome to my documentation site"
+    "content": "Welcome to the DevOps documentation site. Use the sidebar to navigate topics."
   },
   {
     "slug": "installation",
     "title": "Installation",
-    "content": "Steps to install the project"
+    "content": "Steps to install the project locally using Node.js 20+ and npm."
+  },
+  {
+    "slug": "pr-review-agent",
+    "title": "PR Review Agent",
+    "content": "Automated PR review workflow that enforces enterprise standards, runs LLM code review, and scans for security vulnerabilities on every pull request."
   }
 ]
