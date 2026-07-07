@@ -157,38 +157,44 @@ jobs:
           AUTH=$(printf '%s:%s' "$JIRA_USER_EMAIL" "$JIRA_API_TOKEN" | base64 -w0)
           PROJECT="${JIRA_PROJECT_KEY:-SCRUM}"
 
-          # ── Find the sprint ID ───────────────────────────────────────────────
-          # Get all boards for the project, find the first one
-          BOARDS=$(curl -sf \
+          # ── Find the board ID ────────────────────────────────────────────────
+          # Query the Jira Agile API; show full response on failure for debugging
+          echo "Querying Jira board list for project: $PROJECT"
+          BOARDS=$(curl -s \
             -H "Authorization: Basic $AUTH" \
             -H "Accept: application/json" \
-            "${JIRA_BASE_URL}/rest/agile/1.0/board?projectKeyOrId=${PROJECT}&maxResults=1")
+            "${JIRA_BASE_URL}/rest/agile/1.0/board?projectKeyOrId=${PROJECT}&maxResults=10")
+
+          echo "Board API response: $BOARDS"
           BOARD_ID=$(echo "$BOARDS" | jq -r '.values[0].id // empty')
 
+          # Fallback: your board URL is /boards/1 — use it directly if lookup fails
           if [ -z "$BOARD_ID" ]; then
-            echo "❌ Could not find a Jira board for project $PROJECT"
-            echo "[]" > /tmp/jira_tickets.json
-            echo "jira_sprint_name=unknown" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "⚠️  Board lookup returned no results — falling back to board ID 1 (from your board URL)"
+            BOARD_ID="1"
           fi
 
-          echo "Board ID: $BOARD_ID"
+          echo "Using Board ID: $BOARD_ID"
 
           # ── Fetch the right sprint ────────────────────────────────────────────
           if [ "$SPRINT_INPUT" = "active" ]; then
             # Get the currently active sprint
-            SPRINT_DATA=$(curl -sf \
+            echo "Fetching active sprint for board $BOARD_ID"
+            SPRINT_DATA=$(curl -s \
               -H "Authorization: Basic $AUTH" \
               -H "Accept: application/json" \
               "${JIRA_BASE_URL}/rest/agile/1.0/board/${BOARD_ID}/sprint?state=active")
+            echo "Sprint API response: $SPRINT_DATA"
             SPRINT_ID=$(echo "$SPRINT_DATA" | jq -r '.values[0].id // empty')
             SPRINT_NAME=$(echo "$SPRINT_DATA" | jq -r '.values[0].name // "Active Sprint"')
           else
-            # Search by name (closed or active)
-            SPRINT_DATA=$(curl -sf \
+            # Search by name across all sprint states
+            echo "Fetching all sprints for board $BOARD_ID"
+            SPRINT_DATA=$(curl -s \
               -H "Authorization: Basic $AUTH" \
               -H "Accept: application/json" \
               "${JIRA_BASE_URL}/rest/agile/1.0/board/${BOARD_ID}/sprint?maxResults=50")
+            echo "Sprint API response: $SPRINT_DATA"
             SPRINT_ID=$(echo "$SPRINT_DATA" | jq -r \
               --arg name "$SPRINT_INPUT" \
               '.values[] | select(.name == $name) | .id' | head -n 1)
@@ -208,7 +214,8 @@ jobs:
           fi
 
           # ── Fetch issues for the sprint ──────────────────────────────────────
-          ISSUES=$(curl -sf \
+          echo "Fetching issues with JQL: $JQL"
+          ISSUES=$(curl -s \
             -H "Authorization: Basic $AUTH" \
             -H "Accept: application/json" \
             "${JIRA_BASE_URL}/rest/api/3/search?jql=${JQL}&maxResults=100&fields=summary,status,issuetype,assignee,priority,description,labels")
