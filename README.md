@@ -47,3 +47,7 @@
 Deploy this starter with one click on [Netlify](https://app.netlify.com/signup):
 
 [<img src="https://www.netlify.com/img/deploy/button.svg" alt="Deploy to Netlify" />](https://app.netlify.com/start/deploy?repository=https://github.com/gatsbyjs/gatsby-starter-minimal)
+
+
+## 🚀 Add-on
+this repo also has PR Review AI agent code which will review/Security scan once PR is raised , also provides the recomended fix, utill dev team fix the issue , merge button wont be enabled.
