@@ -1,0 +1,33 @@
+# Gitleaks configuration — gatsby-doc-site
+# Docs: https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml
+
+title = "gatsby-doc-site gitleaks config"
+
+[extend]
+useDefault = true
+
+# ── Global allowlist ─────────────────────────────────────────────────────────
+[allowlist]
+description = "Known test placeholders and generated build output"
+
+# Allowlist the two fake keys used in CI negative-test commits
+regexes = [
+  '''sk-live-abc123supersecret''',
+  '''sk-prod-9x8y7z6w5v4u3t2s1r0q''',
+  # Documentation placeholder — not a real credential
+  '''YOUR_EMAIL:YOUR_API_TOKEN''',
+]
+
+# Ignore Gatsby compiled output — secrets in source are caught before build
+paths = [
+  '''public/''',
+  '''\.cache/''',
+  '''.*\.map$''',
+]
+
+# ── Disable rules that fire on documentation placeholder text ─────────────────
+[[rules]]
+id          = "curl-auth-user"
+description = "Disabled: fires on curl -u placeholder text in docs"
+regex       = "(?i)this-rule-intentionally-never-matches-xyzzy"
+tags        = ["disabled"]
