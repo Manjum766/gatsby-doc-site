@@ -404,7 +404,7 @@ was added so tickets transition automatically on PR open/merge.
 
       <div style={s.successBox}>
         <strong>Verify Jira connectivity manually:</strong>
-        <Cmd>{`curl -u YOUR_EMAIL:YOUR_API_TOKEN \\
+        <Cmd>{`curl -u your-email@example.com:<ATLASSIAN_API_TOKEN> \\
   "https://manjum005.atlassian.net/rest/agile/1.0/board?projectKeyOrId=SCRUM" \\
   | jq '.values[].name'`}</Cmd>
         You should see the board name printed. If you get a 401, the email or token is wrong.
