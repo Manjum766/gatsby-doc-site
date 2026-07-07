@@ -205,41 +205,84 @@ jobs:
           fi
 
           if [ -z "$SPRINT_ID" ]; then
-            echo "⚠️  Sprint '$SPRINT_INPUT' not found — will list all project issues instead."
-            # Fallback: last 50 issues from project
-            JQL="project=${PROJECT}+ORDER+BY+updated+DESC"
+            echo "⚠️  Sprint not found — fetching all project issues via JQL fallback."
             SPRINT_NAME="Recent Issues"
+
+            # JQL fallback — works on all board types
+            ISSUES=$(curl -s \
+              -H "Authorization: Basic $AUTH" \
+              -H "Accept: application/json" \
+              "${JIRA_BASE_URL}/rest/api/3/search?jql=project%3D${PROJECT}%20ORDER%20BY%20updated%20DESC&maxResults=50&fields=summary,status,issuetype,assignee,priority,labels")
+            echo "Issues API response (JQL fallback): $ISSUES"
+
+            echo "$ISSUES" | jq -e '.issues' > /dev/null 2>&1 || {
+              echo "⚠️  JQL fallback also returned no .issues — writing empty list"
+              echo "[]" > /tmp/jira_tickets.json
+            }
+            if [ ! -f /tmp/jira_tickets.json ]; then
+              echo "$ISSUES" | jq '[.issues[] | {
+                key:      .key,
+                summary:  .fields.summary,
+                type:     (.fields.issuetype.name // "Unknown"),
+                status:   (.fields.status.name // "Unknown"),
+                priority: (.fields.priority.name // "Unknown"),
+                assignee: (.fields.assignee.displayName // "Unassigned"),
+                labels:   (.fields.labels // []),
+                url:      ("'"${JIRA_BASE_URL}"'/browse/" + .key)
+              }]' > /tmp/jira_tickets.json
+            fi
+
           else
             echo "Sprint: $SPRINT_NAME (ID: $SPRINT_ID)"
-            JQL="sprint=${SPRINT_ID}"
-          fi
 
-          # ── Fetch issues for the sprint ──────────────────────────────────────
-          echo "Fetching issues with JQL: $JQL"
-          ISSUES=$(curl -s \
-            -H "Authorization: Basic $AUTH" \
-            -H "Accept: application/json" \
-            "${JIRA_BASE_URL}/rest/api/3/search?jql=${JQL}&maxResults=100&fields=summary,status,issuetype,assignee,priority,description,labels")
+            # ── Use the Agile sprint-issues endpoint (works on simple boards) ──
+            # This avoids the `sprint=` JQL keyword which requires Software board type
+            echo "Fetching sprint issues via Agile endpoint: /sprint/${SPRINT_ID}/issue"
+            SPRINT_ISSUES=$(curl -s \
+              -H "Authorization: Basic $AUTH" \
+              -H "Accept: application/json" \
+              "${JIRA_BASE_URL}/rest/agile/1.0/sprint/${SPRINT_ID}/issue?maxResults=100&fields=summary,status,issuetype,assignee,priority,labels")
+            echo "Sprint issues API response: $SPRINT_ISSUES"
 
-          echo "Issues API response: $ISSUES"
+            # Guard: try .issues first (agile endpoint), then .values (alternate shape)
+            HAS_ISSUES=$(echo "$SPRINT_ISSUES" | jq -e '.issues | length > 0' 2>/dev/null && echo yes || echo no)
 
-          # Guard: if .issues is missing or null (API error), write empty array
-          echo "$ISSUES" | jq -e '.issues' > /dev/null 2>&1 || {
-            echo "⚠️  Issues response has no .issues field — writing empty ticket list"
-            echo "[]" > /tmp/jira_tickets.json
-          }
+            if [ "$HAS_ISSUES" = "yes" ]; then
+              echo "$SPRINT_ISSUES" | jq '[.issues[] | {
+                key:      .key,
+                summary:  .fields.summary,
+                type:     (.fields.issuetype.name // "Unknown"),
+                status:   (.fields.status.name // "Unknown"),
+                priority: (.fields.priority.name // "Unknown"),
+                assignee: (.fields.assignee.displayName // "Unassigned"),
+                labels:   (.fields.labels // []),
+                url:      ("'"${JIRA_BASE_URL}"'/browse/" + .key)
+              }]' > /tmp/jira_tickets.json
+            else
+              echo "⚠️  Agile endpoint returned no issues — falling back to JQL project search"
+              ISSUES=$(curl -s \
+                -H "Authorization: Basic $AUTH" \
+                -H "Accept: application/json" \
+                "${JIRA_BASE_URL}/rest/api/3/search?jql=project%3D${PROJECT}%20ORDER%20BY%20updated%20DESC&maxResults=50&fields=summary,status,issuetype,assignee,priority,labels")
+              echo "JQL fallback response: $ISSUES"
 
-          if [ ! -f /tmp/jira_tickets.json ]; then
-            echo "$ISSUES" | jq '[.issues[] | {
-              key:      .key,
-              summary:  .fields.summary,
-              type:     (.fields.issuetype.name // "Unknown"),
-              status:   (.fields.status.name // "Unknown"),
-              priority: (.fields.priority.name // "Unknown"),
-              assignee: (.fields.assignee.displayName // "Unassigned"),
-              labels:   (.fields.labels // []),
-              url:      ("'"${JIRA_BASE_URL}"'/browse/" + .key)
-            }]' > /tmp/jira_tickets.json
+              echo "$ISSUES" | jq -e '.issues | length > 0' > /dev/null 2>&1 || {
+                echo "⚠️  No issues found at all — writing empty list"
+                echo "[]" > /tmp/jira_tickets.json
+              }
+              if [ ! -f /tmp/jira_tickets.json ]; then
+                echo "$ISSUES" | jq '[.issues[] | {
+                  key:      .key,
+                  summary:  .fields.summary,
+                  type:     (.fields.issuetype.name // "Unknown"),
+                  status:   (.fields.status.name // "Unknown"),
+                  priority: (.fields.priority.name // "Unknown"),
+                  assignee: (.fields.assignee.displayName // "Unassigned"),
+                  labels:   (.fields.labels // []),
+                  url:      ("'"${JIRA_BASE_URL}"'/browse/" + .key)
+                }]' > /tmp/jira_tickets.json
+              fi
+            fi
           fi
 
           TICKET_COUNT=$(jq length /tmp/jira_tickets.json)
