@@ -1,3 +1,20 @@
+# Release v2026.07.07-0343f01
+
+**Date:** 2026-07-07  
+**Sprint:** SCRUM Sprint 1
+
+## Jira Tickets (5)
+
+- [SCRUM-1](https://manjum005.atlassian.net/browse/SCRUM-1) — Start here: Add your team's work `Done` (Task)
+- [SCRUM-2](https://manjum005.atlassian.net/browse/SCRUM-2) — Connect GitHub Copilot to Jira `Done` (Task)
+- [SCRUM-3](https://manjum005.atlassian.net/browse/SCRUM-3) — Connect Atlassian Rovo MCP to your local coding tools `Done` (Task)
+- [SCRUM-6](https://manjum005.atlassian.net/browse/SCRUM-6) — Tekton Pipeline Instability – Screenshot Access Failure and Delayed Report Generation `In Progress` (Task)
+- [SCRUM-7](https://manjum005.atlassian.net/browse/SCRUM-7) — Create GitHub login for New users `To Do` (Task)
+
+## Merged Pull Requests (0)
+
+---
+
 # Release v2026.07.07-5650eca
 
 **Date:** 2026-07-07  
