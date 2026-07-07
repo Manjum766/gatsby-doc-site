@@ -244,10 +244,11 @@ jobs:
               "${JIRA_BASE_URL}/rest/agile/1.0/sprint/${SPRINT_ID}/issue?maxResults=100&fields=summary,status,issuetype,assignee,priority,labels")
             echo "Sprint issues API response: $SPRINT_ISSUES"
 
-            # Guard: try .issues first (agile endpoint), then .values (alternate shape)
-            HAS_ISSUES=$(echo "$SPRINT_ISSUES" | jq -e '.issues | length > 0' 2>/dev/null && echo yes || echo no)
+            # Count issues returned — use arithmetic to avoid shell boolean bugs
+            ISSUE_COUNT=$(echo "$SPRINT_ISSUES" | jq '.issues | length' 2>/dev/null || echo 0)
+            echo "Issues found in sprint: $ISSUE_COUNT"
 
-            if [ "$HAS_ISSUES" = "yes" ]; then
+            if [ "$ISSUE_COUNT" -gt 0 ]; then
               echo "$SPRINT_ISSUES" | jq '[.issues[] | {
                 key:      .key,
                 summary:  .fields.summary,
@@ -258,19 +259,16 @@ jobs:
                 labels:   (.fields.labels // []),
                 url:      ("'"${JIRA_BASE_URL}"'/browse/" + .key)
               }]' > /tmp/jira_tickets.json
+              echo "✅ Written $ISSUE_COUNT tickets to jira_tickets.json"
             else
-              echo "⚠️  Agile endpoint returned no issues — falling back to JQL project search"
+              echo "⚠️  Sprint endpoint returned 0 issues — falling back to full project search"
               ISSUES=$(curl -s \
                 -H "Authorization: Basic $AUTH" \
                 -H "Accept: application/json" \
                 "${JIRA_BASE_URL}/rest/api/3/search?jql=project%3D${PROJECT}%20ORDER%20BY%20updated%20DESC&maxResults=50&fields=summary,status,issuetype,assignee,priority,labels")
               echo "JQL fallback response: $ISSUES"
-
-              echo "$ISSUES" | jq -e '.issues | length > 0' > /dev/null 2>&1 || {
-                echo "⚠️  No issues found at all — writing empty list"
-                echo "[]" > /tmp/jira_tickets.json
-              }
-              if [ ! -f /tmp/jira_tickets.json ]; then
+              FALLBACK_COUNT=$(echo "$ISSUES" | jq '.issues | length' 2>/dev/null || echo 0)
+              if [ "$FALLBACK_COUNT" -gt 0 ]; then
                 echo "$ISSUES" | jq '[.issues[] | {
                   key:      .key,
                   summary:  .fields.summary,
@@ -281,6 +279,9 @@ jobs:
                   labels:   (.fields.labels // []),
                   url:      ("'"${JIRA_BASE_URL}"'/browse/" + .key)
                 }]' > /tmp/jira_tickets.json
+              else
+                echo "⚠️  No issues found — writing empty list"
+                echo "[]" > /tmp/jira_tickets.json
               fi
             fi
           fi
