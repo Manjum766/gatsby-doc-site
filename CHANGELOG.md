@@ -1,3 +1,18 @@
+# Release v2026.07.07-643c742
+
+**Date:** 2026-07-07  
+**Sprint:** AEM Sprint 1
+
+## Jira Tickets (3)
+
+- [AEM-1](https://manjum005.atlassian.net/browse/AEM-1) — Setup the AEM Author in local `To Do` (Task)
+- [AEM-2](https://manjum005.atlassian.net/browse/AEM-2) — Setup AEM Publisher in Local `To Do` (Task)
+- [AEM-3](https://manjum005.atlassian.net/browse/AEM-3) — Setup Dispatcher in local `To Do` (Task)
+
+## Merged Pull Requests (0)
+
+---
+
 # Release v2026.07.07-0343f01
 
 **Date:** 2026-07-07  
