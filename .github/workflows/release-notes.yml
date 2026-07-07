@@ -1,0 +1,376 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Release Notes Generator
+#
+# Triggers:
+#   • Automatically when a PR is merged into master
+#   • Manually via workflow_dispatch (choose any sprint name)
+#
+# What it does:
+#   1. Fetches all Jira tickets for the given sprint from
+#      https://manjum005.atlassian.net (project: SCRUM)
+#   2. Collects all GitHub PRs merged since the last published GitHub Release
+#   3. Sends both to GPT-4o which produces structured Markdown release notes
+#   4. Creates (or updates) a GitHub Release with the generated notes
+#   5. Appends a CHANGELOG.md entry and opens a PR to commit it
+#
+# Required secrets (Settings → Secrets → Actions):
+#   JIRA_BASE_URL      – https://manjum005.atlassian.net
+#   JIRA_USER_EMAIL    – your Atlassian account email
+#   JIRA_API_TOKEN     – Atlassian API token (account settings → security)
+#   JIRA_PROJECT_KEY   – SCRUM
+#   OPENAI_API_KEY     – OpenAI API key for GPT-4o (optional; falls back to raw list)
+#
+# Required repo settings:
+#   Settings → Actions → General → Workflow permissions → Read and write
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Release Notes Generator
+
+on:
+  # Auto-trigger when a PR is merged into master
+  pull_request:
+    branches: [master]
+    types: [closed]
+
+  # Manual trigger — supply a sprint name; defaults to "active"
+  workflow_dispatch:
+    inputs:
+      sprint_name:
+        description: 'Jira sprint name (exact match, e.g. "Sprint 1"). Leave blank to use the active sprint.'
+        required: false
+        default: ''
+      release_tag:
+        description: 'Git tag for this release (e.g. v1.2.0). Leave blank to auto-generate from date.'
+        required: false
+        default: ''
+
+concurrency:
+  group: release-notes-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+  generate-release-notes:
+    name: 📝 Generate Release Notes
+    # On PR close: only run when the PR was actually merged
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # full history needed to diff against last release tag
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 2. Resolve release tag & sprint name ────────────────────────────────
+      - name: Resolve release tag and sprint
+        id: meta
+        env:
+          INPUT_TAG:    ${{ github.event.inputs.release_tag }}
+          INPUT_SPRINT: ${{ github.event.inputs.sprint_name }}
+        run: |
+          # Tag: use input, or fall back to date-based tag
+          if [ -n "$INPUT_TAG" ]; then
+            TAG="$INPUT_TAG"
+          else
+            TAG="v$(date -u +%Y.%m.%d)-$(git rev-parse --short HEAD)"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          # Sprint: use input, or the string "active" (handled below in Jira step)
+          SPRINT="${INPUT_SPRINT:-active}"
+          echo "sprint=$SPRINT" >> "$GITHUB_OUTPUT"
+
+          echo "Resolved tag   : $TAG"
+          echo "Resolved sprint: $SPRINT"
+
+      # ── 3. Find last GitHub release tag (for PR range) ──────────────────────
+      - name: Get previous release tag
+        id: prev
+        run: |
+          PREV=$(git tag --sort=-creatordate | grep -E '^v[0-9]' | head -n 1 || echo "")
+          echo "prev_tag=${PREV}" >> "$GITHUB_OUTPUT"
+          echo "Previous tag: ${PREV:-<none, using first commit>}"
+
+      # ── 4. Collect merged PRs since last release ────────────────────────────
+      - name: Collect merged PRs
+        id: prs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PREV_TAG: ${{ steps.prev.outputs.prev_tag }}
+        run: |
+          if [ -n "$PREV_TAG" ]; then
+            SINCE=$(git log "$PREV_TAG" -1 --format="%cI")
+          else
+            # No previous tag — use 30 days ago
+            SINCE=$(date -u -d '30 days ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+                    || date -u -v-30d +%Y-%m-%dT%H:%M:%SZ)
+          fi
+          echo "Collecting PRs merged since: $SINCE"
+
+          # Use GitHub CLI to list merged PRs in JSON
+          gh pr list \
+            --state merged \
+            --base master \
+            --limit 100 \
+            --json number,title,author,mergedAt,labels,body \
+            --jq "map(select(.mergedAt >= \"$SINCE\")) |
+                  map({
+                    number: .number,
+                    title:  .title,
+                    author: .author.login,
+                    merged: .mergedAt,
+                    labels: [.labels[].name],
+                    body:   (.body // \"\" | .[0:500])
+                  })" \
+            > /tmp/prs.json
+
+          PR_COUNT=$(jq length /tmp/prs.json)
+          echo "pr_count=$PR_COUNT" >> "$GITHUB_OUTPUT"
+          echo "Merged PRs found: $PR_COUNT"
+          cat /tmp/prs.json
+
+      # ── 5. Fetch Jira sprint tickets ─────────────────────────────────────────
+      - name: Fetch Jira sprint tickets
+        id: jira
+        env:
+          JIRA_BASE_URL:   ${{ secrets.JIRA_BASE_URL }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          JIRA_API_TOKEN:  ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_PROJECT_KEY: ${{ secrets.JIRA_PROJECT_KEY }}
+          SPRINT_INPUT:    ${{ steps.meta.outputs.sprint }}
+        run: |
+          # Validate secrets are present
+          if [ -z "$JIRA_BASE_URL" ] || [ -z "$JIRA_USER_EMAIL" ] || [ -z "$JIRA_API_TOKEN" ]; then
+            echo "⚠️  Jira secrets not configured — skipping Jira fetch."
+            echo "[]" > /tmp/jira_tickets.json
+            echo "jira_sprint_name=N/A" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          AUTH=$(printf '%s:%s' "$JIRA_USER_EMAIL" "$JIRA_API_TOKEN" | base64 -w0)
+          PROJECT="${JIRA_PROJECT_KEY:-SCRUM}"
+
+          # ── Find the sprint ID ───────────────────────────────────────────────
+          # Get all boards for the project, find the first one
+          BOARDS=$(curl -sf \
+            -H "Authorization: Basic $AUTH" \
+            -H "Accept: application/json" \
+            "${JIRA_BASE_URL}/rest/agile/1.0/board?projectKeyOrId=${PROJECT}&maxResults=1")
+          BOARD_ID=$(echo "$BOARDS" | jq -r '.values[0].id // empty')
+
+          if [ -z "$BOARD_ID" ]; then
+            echo "❌ Could not find a Jira board for project $PROJECT"
+            echo "[]" > /tmp/jira_tickets.json
+            echo "jira_sprint_name=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Board ID: $BOARD_ID"
+
+          # ── Fetch the right sprint ────────────────────────────────────────────
+          if [ "$SPRINT_INPUT" = "active" ]; then
+            # Get the currently active sprint
+            SPRINT_DATA=$(curl -sf \
+              -H "Authorization: Basic $AUTH" \
+              -H "Accept: application/json" \
+              "${JIRA_BASE_URL}/rest/agile/1.0/board/${BOARD_ID}/sprint?state=active")
+            SPRINT_ID=$(echo "$SPRINT_DATA" | jq -r '.values[0].id // empty')
+            SPRINT_NAME=$(echo "$SPRINT_DATA" | jq -r '.values[0].name // "Active Sprint"')
+          else
+            # Search by name (closed or active)
+            SPRINT_DATA=$(curl -sf \
+              -H "Authorization: Basic $AUTH" \
+              -H "Accept: application/json" \
+              "${JIRA_BASE_URL}/rest/agile/1.0/board/${BOARD_ID}/sprint?maxResults=50")
+            SPRINT_ID=$(echo "$SPRINT_DATA" | jq -r \
+              --arg name "$SPRINT_INPUT" \
+              '.values[] | select(.name == $name) | .id' | head -n 1)
+            SPRINT_NAME=$(echo "$SPRINT_DATA" | jq -r \
+              --arg name "$SPRINT_INPUT" \
+              '.values[] | select(.name == $name) | .name' | head -n 1)
+          fi
+
+          if [ -z "$SPRINT_ID" ]; then
+            echo "⚠️  Sprint '$SPRINT_INPUT' not found — will list all project issues instead."
+            # Fallback: last 50 issues from project
+            JQL="project=${PROJECT}+ORDER+BY+updated+DESC"
+            SPRINT_NAME="Recent Issues"
+          else
+            echo "Sprint: $SPRINT_NAME (ID: $SPRINT_ID)"
+            JQL="sprint=${SPRINT_ID}"
+          fi
+
+          # ── Fetch issues for the sprint ──────────────────────────────────────
+          ISSUES=$(curl -sf \
+            -H "Authorization: Basic $AUTH" \
+            -H "Accept: application/json" \
+            "${JIRA_BASE_URL}/rest/api/3/search?jql=${JQL}&maxResults=100&fields=summary,status,issuetype,assignee,priority,description,labels")
+
+          echo "$ISSUES" | jq '[.issues[] | {
+            key:        .key,
+            summary:    .fields.summary,
+            type:       .fields.issuetype.name,
+            status:     .fields.status.name,
+            priority:   .fields.priority.name,
+            assignee:   (.fields.assignee.displayName // "Unassigned"),
+            labels:     .fields.labels,
+            url:        ("'"${JIRA_BASE_URL}"'/browse/" + .key)
+          }]' > /tmp/jira_tickets.json
+
+          TICKET_COUNT=$(jq length /tmp/jira_tickets.json)
+          echo "jira_sprint_name=$SPRINT_NAME" >> "$GITHUB_OUTPUT"
+          echo "Jira tickets fetched: $TICKET_COUNT for sprint '$SPRINT_NAME'"
+          cat /tmp/jira_tickets.json
+
+      # ── 6. Generate release notes with GPT-4o ───────────────────────────────
+      - name: Generate release notes (LLM)
+        id: notes
+        env:
+          OPENAI_API_KEY:  ${{ secrets.OPENAI_API_KEY }}
+          RELEASE_TAG:     ${{ steps.meta.outputs.tag }}
+          SPRINT_NAME:     ${{ steps.jira.outputs.jira_sprint_name }}
+          REPO:            ${{ github.repository }}
+        run: |
+          PR_JSON=$(cat /tmp/prs.json)
+          JIRA_JSON=$(cat /tmp/jira_tickets.json)
+
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "ℹ️  OPENAI_API_KEY not set — generating raw release notes without LLM."
+            # Raw fallback: build plain Markdown from JSON directly
+            python3 - <<'PYEOF'
+          import json, os, datetime
+
+          prs    = json.load(open('/tmp/prs.json'))
+          jiras  = json.load(open('/tmp/jira_tickets.json'))
+          tag    = os.environ['RELEASE_TAG']
+          sprint = os.environ['SPRINT_NAME']
+          today  = datetime.date.today().isoformat()
+
+          lines = [
+            f"# Release {tag}",
+            f"",
+            f"**Date:** {today}  ",
+            f"**Sprint:** {sprint}",
+            f"",
+            f"## Jira Tickets ({len(jiras)})",
+            f"",
+          ]
+          for t in jiras:
+            lines.append(f"- [{t['key']}]({t['url']}) — {t['summary']} `{t['status']}` ({t['type']})")
+
+          lines += [f"", f"## Merged Pull Requests ({len(prs)})", f""]
+          for p in prs:
+            lines.append(f"- [#{p['number']}] {p['title']} @{p['author']}")
+
+          notes = "\n".join(lines)
+          with open('/tmp/release_notes.md', 'w') as f:
+            f.write(notes)
+          print(notes)
+          PYEOF
+          else
+            # LLM-enhanced release notes
+            PAYLOAD=$(jq -n \
+              --arg tag    "$RELEASE_TAG" \
+              --arg sprint "$SPRINT_NAME" \
+              --arg repo   "$REPO" \
+              --argjson prs    "$PR_JSON" \
+              --argjson jiras  "$JIRA_JSON" \
+              '{
+                model: "gpt-4o",
+                temperature: 0.3,
+                max_tokens: 2000,
+                messages: [
+                  {
+                    role: "system",
+                    content: "You are a technical writer generating professional software release notes. Format your output as clean Markdown. Structure it as: # Release <tag>\n**Date:**...\n**Sprint:**...\n## Highlights\n## New Features\n## Bug Fixes\n## Improvements\n## Security & Chores\n## Jira Tickets\n## Pull Requests\n\nGroup Jira tickets by type (Story/Bug/Task/Sub-task). For each PR, map it to a Jira ticket if the key appears in the title or body. Write Highlights as 2-3 sentence executive summary of the most impactful changes. Be concise and professional."
+                  },
+                  {
+                    role: "user",
+                    content: ("Generate release notes for release \($tag) of repo \($repo).\n\nSprint: \($sprint)\n\nJira Tickets:\n```json\n\($jiras | tojson)\n```\n\nMerged PRs:\n```json\n\($prs | tojson)\n```")
+                  }
+                ]
+              }')
+
+            RESPONSE=$(curl -sf https://api.openai.com/v1/chat/completions \
+              -H "Authorization: Bearer $OPENAI_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "$PAYLOAD")
+
+            NOTES=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // "LLM returned no content."')
+            echo "$NOTES" > /tmp/release_notes.md
+            echo "Generated release notes (LLM):"
+            cat /tmp/release_notes.md
+          fi
+
+          # Expose as step output (truncated for env var limit)
+          {
+            echo "notes<<ENDOFNOTES"
+            head -c 60000 /tmp/release_notes.md
+            echo ""
+            echo "ENDOFNOTES"
+          } >> "$GITHUB_OUTPUT"
+
+      # ── 7. Create / update GitHub Release ───────────────────────────────────
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN:    ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+          SPRINT_NAME: ${{ steps.jira.outputs.jira_sprint_name }}
+        run: |
+          NOTES=$(cat /tmp/release_notes.md)
+
+          # Check if tag already exists
+          if git tag | grep -q "^${RELEASE_TAG}$"; then
+            echo "Tag $RELEASE_TAG already exists — updating release body only."
+            gh release edit "$RELEASE_TAG" --notes "$NOTES"
+          else
+            gh release create "$RELEASE_TAG" \
+              --title "Release ${RELEASE_TAG} — ${SPRINT_NAME}" \
+              --notes "$NOTES" \
+              --target master
+          fi
+          echo "✅ GitHub Release created/updated: $RELEASE_TAG"
+
+      # ── 8. Append to CHANGELOG.md and open a PR ─────────────────────────────
+      - name: Append to CHANGELOG.md
+        env:
+          GH_TOKEN:    ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          NOTES=$(cat /tmp/release_notes.md)
+          BRANCH="chore/release-notes-${RELEASE_TAG}"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+
+          # Prepend new release notes to CHANGELOG.md
+          if [ -f CHANGELOG.md ]; then
+            { echo "$NOTES"; echo ""; echo "---"; echo ""; cat CHANGELOG.md; } > /tmp/new_changelog.md
+          else
+            { echo "# Changelog"; echo ""; echo "$NOTES"; } > /tmp/new_changelog.md
+          fi
+          mv /tmp/new_changelog.md CHANGELOG.md
+
+          git add CHANGELOG.md
+          git commit -m "chore(changelog): release notes for ${RELEASE_TAG}"
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --title "chore(changelog): release notes for ${RELEASE_TAG}" \
+            --body "Auto-generated release notes for **${RELEASE_TAG}** from the Release Notes Generator workflow.
+
+          Jira Sprint: ${{ steps.jira.outputs.jira_sprint_name }}
+
+          Please review and merge to keep \`CHANGELOG.md\` up to date." \
+            --base master \
+            --head "$BRANCH"
+
+          echo "✅ CHANGELOG PR opened on branch $BRANCH"

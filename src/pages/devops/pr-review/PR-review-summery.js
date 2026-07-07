@@ -1,5 +1,6 @@
 import React from "react"
-import Layout from "../../components/layout"
+import { Link } from "gatsby"
+import Layout from "../../../components/layout"
 
 export default function PRReviewPage() {
   return (
@@ -49,6 +50,17 @@ export default function PRReviewPage() {
           <em>✅ PR Review Gate</em> status check to pass before merge.
         </li>
       </ol>
+
+      <h2>Sub-pages</h2>
+      <ul>
+        <li>
+          <Link to="/devops/pr-review/architecture">
+            Architecture &amp; Design Plan
+          </Link>
+          {" "}— Full design spec: 6 pillars, job pipeline, Jira integration,
+          tech stack, and implementation phases.
+        </li>
+      </ul>
     </Layout>
   )
 }
