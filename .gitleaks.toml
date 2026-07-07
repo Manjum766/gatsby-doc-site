@@ -1,0 +1,26 @@
+# Gitleaks configuration
+# Docs: https://github.com/gitleaks/gitleaks#configuration
+
+title = "gatsby-doc-site gitleaks config"
+
+[extend]
+# Extend the default ruleset
+useDefault = true
+
+[allowlist]
+description = "Allowlist for known test/build artifacts"
+
+# The fake key was introduced intentionally in a CI gate negative-test commit
+# and also compiled into public/ build artifacts by Gatsby. It is not a real
+# credential — the value is a deliberately invalid placeholder.
+regexes = [
+  "sk-live-abc123supersecret",
+  "sk-prod-9x8y7z6w5v4u3t2s1r0q",
+]
+
+# Also ignore compiled Gatsby build output — these are generated files that
+# embed source content verbatim; secrets in source are caught before build.
+paths = [
+  "public/",
+  ".cache/",
+]
