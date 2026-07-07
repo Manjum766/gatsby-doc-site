@@ -22,6 +22,7 @@
 #
 # Required repo settings:
 #   Settings → Actions → General → Workflow permissions → Read and write
+#   Settings → Actions → General → Allow GitHub Actions to create and approve pull requests ✅
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: Release Notes Generator
@@ -355,18 +356,21 @@ jobs:
           fi
           echo "✅ GitHub Release created/updated: $RELEASE_TAG"
 
-      # ── 8. Append to CHANGELOG.md and open a PR ─────────────────────────────
+      # ── 8. Append to CHANGELOG.md directly on master ────────────────────────
       - name: Append to CHANGELOG.md
         env:
           GH_TOKEN:    ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.meta.outputs.tag }}
         run: |
           NOTES=$(cat /tmp/release_notes.md)
-          BRANCH="chore/release-notes-${RELEASE_TAG}"
 
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -b "$BRANCH"
+
+          # Ensure we are on master with latest changes
+          git fetch origin master
+          git checkout master
+          git pull origin master
 
           # Prepend new release notes to CHANGELOG.md
           if [ -f CHANGELOG.md ]; then
@@ -377,17 +381,7 @@ jobs:
           mv /tmp/new_changelog.md CHANGELOG.md
 
           git add CHANGELOG.md
-          git commit -m "chore(changelog): release notes for ${RELEASE_TAG}"
-          git push origin "$BRANCH"
+          git commit -m "chore(changelog): release notes for ${RELEASE_TAG} [skip ci]"
+          git push origin master
 
-          gh pr create \
-            --title "chore(changelog): release notes for ${RELEASE_TAG}" \
-            --body "Auto-generated release notes for **${RELEASE_TAG}** from the Release Notes Generator workflow.
-
-          Jira Sprint: ${{ steps.jira.outputs.jira_sprint_name }}
-
-          Please review and merge to keep \`CHANGELOG.md\` up to date." \
-            --base master \
-            --head "$BRANCH"
-
-          echo "✅ CHANGELOG PR opened on branch $BRANCH"
+          echo "✅ CHANGELOG.md updated on master for ${RELEASE_TAG}"
