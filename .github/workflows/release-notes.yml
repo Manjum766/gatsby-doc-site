@@ -220,16 +220,26 @@ jobs:
             -H "Accept: application/json" \
             "${JIRA_BASE_URL}/rest/api/3/search?jql=${JQL}&maxResults=100&fields=summary,status,issuetype,assignee,priority,description,labels")
 
-          echo "$ISSUES" | jq '[.issues[] | {
-            key:        .key,
-            summary:    .fields.summary,
-            type:       .fields.issuetype.name,
-            status:     .fields.status.name,
-            priority:   .fields.priority.name,
-            assignee:   (.fields.assignee.displayName // "Unassigned"),
-            labels:     .fields.labels,
-            url:        ("'"${JIRA_BASE_URL}"'/browse/" + .key)
-          }]' > /tmp/jira_tickets.json
+          echo "Issues API response: $ISSUES"
+
+          # Guard: if .issues is missing or null (API error), write empty array
+          echo "$ISSUES" | jq -e '.issues' > /dev/null 2>&1 || {
+            echo "⚠️  Issues response has no .issues field — writing empty ticket list"
+            echo "[]" > /tmp/jira_tickets.json
+          }
+
+          if [ ! -f /tmp/jira_tickets.json ]; then
+            echo "$ISSUES" | jq '[.issues[] | {
+              key:      .key,
+              summary:  .fields.summary,
+              type:     (.fields.issuetype.name // "Unknown"),
+              status:   (.fields.status.name // "Unknown"),
+              priority: (.fields.priority.name // "Unknown"),
+              assignee: (.fields.assignee.displayName // "Unassigned"),
+              labels:   (.fields.labels // []),
+              url:      ("'"${JIRA_BASE_URL}"'/browse/" + .key)
+            }]' > /tmp/jira_tickets.json
+          fi
 
           TICKET_COUNT=$(jq length /tmp/jira_tickets.json)
           echo "jira_sprint_name=$SPRINT_NAME" >> "$GITHUB_OUTPUT"
