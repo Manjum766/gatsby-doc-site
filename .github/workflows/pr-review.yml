@@ -270,7 +270,6 @@ jobs:
   security-scan:
     name: 🔒 Security Scan
     runs-on: ubuntu-latest
-    needs: [enforce-standards]
 
     steps:
       - name: Checkout PR branch
