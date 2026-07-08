@@ -54,8 +54,17 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           echo "PR title: $PR_TITLE"
-          if echo "$PR_TITLE" | grep -Eq \
-            '^(feat|fix|docs|style|refactor|perf|test|chore|build|ci|revert)(\([a-z0-9/_-]+\))?!?: .{1,72}$'; then
+          # Normalise common formatting mistakes before matching:
+          #   "fix (scope):"  → "fix(scope):"   (space before opening paren)
+          #   "fix( scope ):" → "fix(scope):"   (spaces inside parens)
+          #   "fix(scope) :"  → "fix(scope):"   (space before colon)
+          # Uses perl for consistent behaviour across BSD (macOS) and GNU (Linux) runners.
+          NORMALISED=$(echo "$PR_TITLE" \
+            | perl -pe 's/ +\(/(/ ; s/\( +/(/ ; s/ +\)/)/ ; s/\) +:/):/')
+          echo "Normalised title: $NORMALISED"
+          # Scope may contain letters, digits, spaces, slashes, underscores, hyphens
+          if echo "$NORMALISED" | grep -Eq \
+            '^(feat|fix|docs|style|refactor|perf|test|chore|build|ci|revert)(\([a-z0-9 /_-]+\))?!?: .{1,72}$'; then
             echo "✅ PR title is valid Conventional Commit format"
           else
             echo "❌ PR title does not follow Conventional Commits"
