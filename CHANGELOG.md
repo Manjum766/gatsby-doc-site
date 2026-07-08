@@ -1,3 +1,20 @@
+# Release v2026.07.08-22021c1
+
+**Date:** 2026-07-08  
+**Sprint:** AEM Sprint 1
+
+## Jira Tickets (3)
+
+- [AEM-1](https://manjum005.atlassian.net/browse/AEM-1) — Setup the AEM Author in local `In Progress` (Task)
+- [AEM-2](https://manjum005.atlassian.net/browse/AEM-2) — Setup AEM Publisher in Local `To Do` (Task)
+- [AEM-3](https://manjum005.atlassian.net/browse/AEM-3) — Setup Dispatcher in local `To Do` (Task)
+
+## Merged Pull Requests (1)
+
+- [#10] fix(merge button): adding merge button on slack once PR review is passed @Manjum766
+
+---
+
 # Release v2026.07.07-87c23ca
 
 **Date:** 2026-07-07  
