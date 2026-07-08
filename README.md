@@ -51,3 +51,6 @@ Deploy this starter with one click on [Netlify](https://app.netlify.com/signup):
 
 ## 🚀 Add-on
 this repo also has PR Review AI agent code which will review/Security scan once PR is raised , also provides the recomended fix, utill dev team fix the issue , merge button wont be enabled.
+
+## 🚀 Merge button
+Once that's done, every time a PR's checks all go green, your Slack channel will receive the notification with the merge button
